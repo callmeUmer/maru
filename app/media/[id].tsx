@@ -366,6 +366,8 @@ function AndroidHero({ media, onTrack, guest }: { media: Media; onTrack: () => v
   const entry = useEntry(media.id);
   const remaining = useCountdown(media.nextAiringEpisode?.timeUntilAiring);
   const mainStudio = media.studios?.edges.find((e) => e.isMain)?.node.name;
+  // The Material 3 hero counts current watchers; popularity stands in when AniList omits the split.
+  const watching = media.stats?.statusDistribution?.find((s) => s.status === 'CURRENT')?.amount ?? null;
 
   return (
     <View style={{ gap: 12, paddingHorizontal: 16, marginTop: -34 }}>
@@ -424,7 +426,11 @@ function AndroidHero({ media, onTrack, guest }: { media: Media; onTrack: () => v
           value={media.nextAiringEpisode ? `EP ${media.nextAiringEpisode.episode}` : statusLabel(media.status)}
           label={media.nextAiringEpisode ? `IN ${countdown(remaining)}` : 'STATUS'}
         />
-        <AndroidStat value={compact(media.popularity)} label="MEMBERS" />
+        {watching != null ? (
+          <AndroidStat value={compact(watching)} label={media.type === 'MANGA' ? 'READING' : 'WATCHING'} />
+        ) : (
+          <AndroidStat value={compact(media.popularity)} label="MEMBERS" />
+        )}
       </View>
     </View>
   );
@@ -571,6 +577,10 @@ function OverviewTab({
         </View>
       ) : null}
 
+      <ScoreDistribution media={media} />
+      <StatusDistribution media={media} />
+      <RankingGrid rankings={(media.rankings ?? []).slice(0, 4)} />
+
       <View style={{ gap: 9 }}>
         <SectionLabel>Details</SectionLabel>
         <View style={{ borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: t.line }}>
@@ -684,21 +694,82 @@ function RelationRow({
   );
 }
 
-function StatsTab({ media }: { media: Media }) {
+/** Section 10 — ten buckets of community scores, with the vote total in the header. */
+function ScoreDistribution({ media }: { media: Media }) {
+  const scores = media.stats?.scoreDistribution ?? [];
+  if (!scores.length) return null;
+
+  const totalVotes = scores.reduce((sum, s) => sum + s.amount, 0);
+  return (
+    <ScoreHistogram
+      title="Score distribution"
+      caption={`${compact(totalVotes)} VOTES`}
+      buckets={[...scores]
+        .sort((a, b) => a.score - b.score)
+        .map((s) => ({ label: String(s.score), value: s.amount }))}
+    />
+  );
+}
+
+/** Section 11 — how everyone else has this title filed. */
+function StatusDistribution({ media }: { media: Media }) {
   const t = useTokens();
+  const statuses = media.stats?.statusDistribution ?? [];
+  if (!statuses.length) return null;
+
+  const order: { key: MediaListStatus; label: string; color: string }[] = [
+    { key: 'COMPLETED', label: 'Completed', color: t.acc },
+    { key: 'CURRENT', label: media.type === 'MANGA' ? 'Reading' : 'Watching', color: t.acc2 },
+    { key: 'PLANNING', label: 'Planning', color: t.fg2 },
+    { key: 'PAUSED', label: 'Paused', color: t.fg3 },
+    { key: 'DROPPED', label: 'Dropped', color: t.bg3 },
+  ];
+
+  return (
+    <StackedBar
+      title="Status distribution"
+      segments={order.map((s) => ({
+        label: s.label,
+        value: statuses.find((x) => x.status === s.key)?.amount ?? 0,
+        color: s.color,
+      }))}
+    />
+  );
+}
+
+/** Section 12 — rankings as a two-column grid; Overview takes the first four. */
+function RankingGrid({ rankings }: { rankings: NonNullable<Media['rankings']> }) {
+  const t = useTokens();
+  if (!rankings.length) return null;
+
+  return (
+    <View style={{ gap: 9 }}>
+      <SectionLabel>Rankings</SectionLabel>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {rankings.map((r) => (
+          <Card
+            key={r.id}
+            style={{ width: '48.5%', flexDirection: 'row', alignItems: 'center', gap: 9 }}
+            padding={11}
+            radius={12}
+          >
+            <Text style={display(15, 700, { color: t.acc2 })}>#{r.rank}</Text>
+            <Text style={[sans(10, 500, { lh: 1.3, color: t.fg2 }), { flex: 1 }]}>
+              {r.context}
+              {r.year ? ` ${r.year}` : ''}
+            </Text>
+          </Card>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/** The Stats tab — the same charts as Overview, plus every ranking rather than four. */
+function StatsTab({ media }: { media: Media }) {
   const scores = media.stats?.scoreDistribution ?? [];
   const statuses = media.stats?.statusDistribution ?? [];
   const rankings = media.rankings ?? [];
-
-  const totalVotes = scores.reduce((sum, s) => sum + s.amount, 0);
-
-  const STATUS_ORDER: { key: string; label: string; color: keyof typeof t }[] = [
-    { key: 'COMPLETED', label: 'Completed', color: 'acc' },
-    { key: 'CURRENT', label: 'Watching', color: 'acc2' },
-    { key: 'PLANNING', label: 'Planning', color: 'fg2' },
-    { key: 'PAUSED', label: 'Paused', color: 'fg3' },
-    { key: 'DROPPED', label: 'Dropped', color: 'bg3' },
-  ];
 
   if (!scores.length && !statuses.length && !rankings.length) {
     return <EmptyState title="No statistics yet" body="AniList has not published distributions for this title." />;
@@ -706,46 +777,9 @@ function StatsTab({ media }: { media: Media }) {
 
   return (
     <>
-      {scores.length ? (
-        <ScoreHistogram
-          title="Score distribution"
-          caption={`${compact(totalVotes)} VOTES`}
-          buckets={scores.map((s) => ({ label: String(s.score), value: s.amount }))}
-        />
-      ) : null}
-
-      {statuses.length ? (
-        <StackedBar
-          title="Status distribution"
-          segments={STATUS_ORDER.map((s) => ({
-            label: s.label,
-            value: statuses.find((x) => x.status === s.key)?.amount ?? 0,
-            color: t[s.color] as string,
-          }))}
-        />
-      ) : null}
-
-      {rankings.length ? (
-        <View style={{ gap: 9 }}>
-          <SectionLabel>Rankings</SectionLabel>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {rankings.slice(0, 4).map((r) => (
-              <Card
-                key={r.id}
-                style={{ width: '48.5%', flexDirection: 'row', alignItems: 'center', gap: 9 }}
-                padding={11}
-                radius={12}
-              >
-                <Text style={display(15, 700, { color: t.acc2 })}>#{r.rank}</Text>
-                <Text style={[sans(10, 500, { lh: 1.3, color: t.fg2 }), { flex: 1 }]}>
-                  {r.context}
-                  {r.year ? ` ${r.year}` : ''}
-                </Text>
-              </Card>
-            ))}
-          </View>
-        </View>
-      ) : null}
+      <ScoreDistribution media={media} />
+      <StatusDistribution media={media} />
+      <RankingGrid rankings={rankings} />
     </>
   );
 }
