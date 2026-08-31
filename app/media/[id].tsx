@@ -11,7 +11,7 @@ import { ScoreHistogram, StackedBar } from '../../src/components/Charts';
 import { Cover } from '../../src/components/Cover';
 import { PosterRail } from '../../src/components/PosterCard';
 import { ProgressSheet } from '../../src/components/ProgressSheet';
-import { Shimmer } from '../../src/components/Skeleton';
+import { RailSkeleton, Shimmer } from '../../src/components/Skeleton';
 import { Card, EmptyState, Press, ProgressBar, SectionLabel } from '../../src/components/primitives';
 import {
   compact,
@@ -57,7 +57,7 @@ export default function MediaDetailScreen() {
   const [expanded, setExpanded] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  const { data, isLoading, isError } = useMediaDetail(mediaId);
+  const { data, isLoading, isError, isPlaceholderData } = useMediaDetail(mediaId);
   const media = data?.Media;
   const android = Platform.OS === 'android';
 
@@ -207,7 +207,10 @@ export default function MediaDetailScreen() {
         </View>
 
         <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 22, gap: 16 }}>
-          {tab === 'Overview' ? (
+          {/* The hero comes from a cached card; the rest waits on the detail query. */}
+          {isPlaceholderData ? (
+            <DetailBodySkeleton />
+          ) : tab === 'Overview' ? (
             <OverviewTab media={media} expanded={expanded} onExpand={() => setExpanded(true)} producers={producers} mainStudio={mainStudio} />
           ) : tab === 'Characters' ? (
             <PeopleGrid
@@ -269,6 +272,22 @@ function GlassButton({
     >
       <Text style={sans(size >= 34 ? 17 : 16, 600, { color: '#fff' })}>{label}</Text>
     </Press>
+  );
+}
+
+/** Stands in for the tab body while the detail query is still in flight. */
+function DetailBodySkeleton() {
+  return (
+    <>
+      <View style={{ gap: 7 }}>
+        <Shimmer style={{ height: 12, width: '100%' }} radius={4} />
+        <Shimmer style={{ height: 12, width: '92%' }} radius={4} />
+        <Shimmer style={{ height: 12, width: '64%' }} radius={4} />
+      </View>
+      <RailSkeleton itemWidth={56} count={5} />
+      <Shimmer style={{ height: 108 }} radius={16} />
+      <Shimmer style={{ height: 92 }} radius={16} />
+    </>
   );
 }
 

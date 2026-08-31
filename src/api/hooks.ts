@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { QueryClient, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 
 import { SeasonInfo, currentSeason } from '../lib/format';
@@ -158,12 +158,48 @@ export function useStudioSearch(search: string, enabled: boolean) {
   });
 }
 
+/**
+ * Finds a Media already sitting in any query cache. Every route into the detail
+ * screen (Discover, Search, Seasonal, My List) has fetched a MediaCard for that
+ * id, so the hero can paint from it while the full record is in flight.
+ */
+function findCachedMedia(client: QueryClient, id: number): Media | undefined {
+  const seen = new Set<object>();
+
+  const walk = (node: unknown, depth: number): Media | undefined => {
+    if (!node || typeof node !== 'object' || depth > 8 || seen.has(node)) return undefined;
+    seen.add(node);
+
+    const candidate = node as Media;
+    if (candidate.id === id && candidate.title && candidate.coverImage) return candidate;
+
+    for (const value of Object.values(node)) {
+      const hit = walk(value, depth + 1);
+      if (hit) return hit;
+    }
+    return undefined;
+  };
+
+  for (const entry of client.getQueryCache().getAll()) {
+    const hit = walk(entry.state.data, 0);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 export function useMediaDetail(id: number) {
+  const client = useQueryClient();
   const query = useQuery({
     queryKey: ['media', id],
     queryFn: () => gqlRequest<{ Media: Media }>(MEDIA_DETAIL, { id }),
     enabled: Number.isFinite(id),
     staleTime: 10 * 60 * 1000,
+    // AniList answers this query in 1-9s. Painting the hero from a cached card
+    // turns a dead shimmer into a screen that only fills in below the fold.
+    placeholderData: () => {
+      const cached = findCachedMedia(client, id);
+      return cached ? { Media: cached } : undefined;
+    },
   });
 
   useIngest(query.data?.Media ? [query.data.Media] : undefined);
