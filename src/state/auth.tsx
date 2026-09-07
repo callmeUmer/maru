@@ -9,12 +9,17 @@ import { VIEWER } from '../api/queries';
 import { Viewer } from '../api/types';
 
 const TOKEN_KEY = 'maru.anilist.token';
+const EXPIRY_KEY = 'maru.anilist.expiry';
 const GUEST_KEY = 'maru.guest';
+
+/** Refresh-free implicit tokens last a year; stop trusting one a day before it lapses. */
+const EXPIRY_SKEW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * AniList issues implicit-grant tokens to a registered client. Set the id in
- * app.json under `expo.extra.anilistClientId` (or EXPO_PUBLIC_ANILIST_CLIENT_ID)
- * with `maru://auth` registered as the client's redirect URL.
+ * app.json under `expo.extra.anilistClientId` (or ANILIST_CLIENT_ID in the
+ * environment, which app.config.js folds into the same field) with
+ * `maru://auth` registered as the client's redirect URL.
  */
 const CLIENT_ID =
   (Constants.expoConfig?.extra?.anilistClientId as string | undefined) ??
@@ -46,11 +51,46 @@ const AuthContext = createContext<AuthState | null>(null);
 let currentToken: string | null = null;
 setTokenGetter(() => currentToken);
 
-async function storeToken(token: string | null) {
+/** SecureStore is native-only; on web the session lives for the lifetime of the tab. */
+const persists = Platform.OS !== 'web';
+
+async function readItem(key: string) {
+  if (!persists) return null;
+  try {
+    return await SecureStore.getItemAsync(key);
+  } catch {
+    // A corrupt or unreadable keychain entry should read as "no session", not crash the launch.
+    return null;
+  }
+}
+
+async function writeItem(key: string, value: string | null) {
+  if (!persists) return;
+  try {
+    if (value === null) await SecureStore.deleteItemAsync(key);
+    else await SecureStore.setItemAsync(key, value);
+  } catch {
+    // Losing persistence is survivable — the in-memory session still works this launch.
+  }
+}
+
+async function storeToken(token: string | null, expiresAt: number | null = null) {
   currentToken = token;
-  if (Platform.OS === 'web') return;
-  if (token) await SecureStore.setItemAsync(TOKEN_KEY, token);
-  else await SecureStore.deleteItemAsync(TOKEN_KEY);
+  await writeItem(TOKEN_KEY, token);
+  await writeItem(EXPIRY_KEY, token && expiresAt ? String(expiresAt) : null);
+}
+
+/**
+ * `promptAsync` resolves to a discriminated union; only the success and error
+ * arms carry the redirect's parameters and parsed authentication.
+ */
+function resultToken(result: AuthSession.AuthSessionResult): {
+  params: Record<string, string>;
+  accessToken: string | null;
+} {
+  if (!('params' in result)) return { params: {}, accessToken: null };
+  const params = result.params ?? {};
+  return { params, accessToken: params.access_token ?? result.authentication?.accessToken ?? null };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -88,12 +128,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const stored = Platform.OS === 'web' ? null : await SecureStore.getItemAsync(TOKEN_KEY);
-        const wasGuest = Platform.OS === 'web' ? null : await SecureStore.getItemAsync(GUEST_KEY);
-        if (stored) {
+        const [stored, expiry, wasGuest] = await Promise.all([
+          readItem(TOKEN_KEY),
+          readItem(EXPIRY_KEY),
+          readItem(GUEST_KEY),
+        ]);
+        const expiresAt = expiry ? Number(expiry) : null;
+        const lapsed = !!expiresAt && Date.now() > expiresAt - EXPIRY_SKEW_MS;
+
+        if (stored && !lapsed) {
           currentToken = stored;
           setToken(stored);
           await loadViewer();
+        } else if (stored) {
+          // Expired tokens only ever produce 401s — clear it and land on sign-in.
+          await storeToken(null);
         }
         if (wasGuest === 'true') setGuest(true);
       } finally {
@@ -113,23 +162,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!request) return { ok: false, error: 'Sign-in is still preparing. Try again in a moment.' };
 
     const result = await promptAsync();
-    if (result.type !== 'success') {
-      return { ok: false, error: result.type === 'dismiss' ? undefined : 'Sign-in was cancelled.' };
-    }
-    const accessToken = result.params?.access_token ?? result.authentication?.accessToken ?? null;
-    if (!accessToken) return { ok: false, error: 'AniList did not return an access token.' };
 
-    await storeToken(accessToken);
+    // AniList returns the token in the redirect's fragment and does not echo the
+    // `state` we sent, which expo-auth-session reports as a state mismatch. The
+    // token still arrived over our own registered `maru://auth` redirect, which
+    // no other app can claim, so read it before trusting the result type.
+    const { params, accessToken } = resultToken(result);
+
+    if (!accessToken) {
+      if (result.type === 'cancel' || result.type === 'dismiss') return { ok: false };
+      const described = params.error_description ?? params.error;
+      return {
+        ok: false,
+        error: described
+          ? `AniList refused the sign-in: ${described}`
+          : 'AniList did not return an access token.',
+      };
+    }
+
+    // `expires_in` is seconds from now (AniList issues a year).
+    const lifetime = Number(params.expires_in);
+    const expiresAt =
+      Number.isFinite(lifetime) && lifetime > 0 ? Date.now() + lifetime * 1000 : null;
+
+    await storeToken(accessToken, expiresAt);
     setToken(accessToken);
     setGuest(false);
-    await SecureStore.deleteItemAsync(GUEST_KEY).catch(() => {});
+    await writeItem(GUEST_KEY, null);
     await loadViewer();
     return { ok: true };
   }, [request, promptAsync, loadViewer]);
 
   const continueAsGuest = useCallback(() => {
     setGuest(true);
-    void SecureStore.setItemAsync(GUEST_KEY, 'true').catch(() => {});
+    void writeItem(GUEST_KEY, 'true');
   }, []);
 
   useEffect(() => {
@@ -145,7 +211,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setViewer(null);
     setGuest(false);
-    await SecureStore.deleteItemAsync(GUEST_KEY).catch(() => {});
+    await writeItem(GUEST_KEY, null);
   }, []);
 
   const value = useMemo<AuthState>(
