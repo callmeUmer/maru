@@ -170,10 +170,11 @@ export default function SettingsScreen() {
         <Row label="Clear image cache" value="Clear" onPress={clearImageCache} />
 
         <SectionHeader>Session</SectionHeader>
+        <Row label="Privacy policy" value="" onPress={() => router.push('/settings/privacy')} />
         <Row
-          label="Privacy policy"
+          label="Revoke access on AniList"
           value=""
-          onPress={() => WebBrowser.openBrowserAsync('https://anilist.co/terms').catch(() => {})}
+          onPress={() => WebBrowser.openBrowserAsync('https://anilist.co/settings/apps').catch(() => {})}
         />
         <Row
           label="Sign out"

@@ -19,15 +19,23 @@ npx expo run:android    # native debug build (needs the Android SDK)
 ## Sign-in
 
 AniList issues implicit-grant tokens to a registered client. Create one at
-<https://anilist.co/settings/developer> with **`maru://auth`** as the redirect URL, then add
-its id to `app.json`:
+<https://anilist.co/settings/developer> with **`maru://auth`** as the redirect URL, then put
+its id in `.env`:
 
-```json
-{ "expo": { "extra": { "anilistClientId": "12345" } } }
+```sh
+cp .env.example .env
+# ANILIST_CLIENT_ID=12345
 ```
 
-Without it the app still runs: **Browse as guest** works everywhere, and tracking
+`app.config.js` folds that into `expo.extra.anilistClientId`; setting the field directly in
+`app.json` works too. Sign-in needs a real build — in Expo Go the redirect resolves to an
+`exp://` URL that AniList will not accept.
+
+Without a client id the app still runs: **Browse as guest** works everywhere, and tracking
 affordances (+1, list pills, the progress sheet) stay hidden, exactly as the handoff specifies.
+
+Shipping to Play is documented in [RELEASE.md](RELEASE.md); the privacy policy the app links
+to is [PRIVACY.md](PRIVACY.md).
 
 ## How it is put together
 
@@ -38,6 +46,7 @@ affordances (+1, list pills, the progress sheet) stay hidden, exactly as the han
 | Type helpers mirroring the design's CSS `font:` shorthand | `src/theme/type.ts` |
 | GraphQL client, queries, typed hooks | `src/api/` |
 | Auth (AniList OAuth + SecureStore) | `src/state/auth.tsx` |
+| Release config, store questionnaires, checklist | `RELEASE.md` |
 | Media list cache — the source of truth for progress and score | `src/state/listCache.tsx` |
 | Screens | `app/` (expo-router) |
 

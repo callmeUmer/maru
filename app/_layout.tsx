@@ -99,8 +99,11 @@ function RootNavigator() {
   useEffect(() => {
     if (!ready) return;
     const onboarding = segments[0] === 'onboarding';
+    // The policy has to be readable before anyone commits to a session, so it
+    // is the one other route that survives the guard.
+    const publicRoute = onboarding || (segments[0] === 'settings' && segments[1] === 'privacy');
     // Auth failures and a cold start with no session both land on screen 12.
-    if (!signedIn && !guest && !onboarding) router.replace('/onboarding');
+    if (!signedIn && !guest && !publicRoute) router.replace('/onboarding');
     else if ((signedIn || guest) && onboarding) router.replace('/');
   }, [ready, signedIn, guest, segments, router]);
 
@@ -123,6 +126,7 @@ function RootNavigator() {
         <Stack.Screen name="notifications" />
         <Stack.Screen name="settings/index" />
         <Stack.Screen name="settings/appearance" />
+        <Stack.Screen name="settings/privacy" />
       </Stack>
     </View>
   );

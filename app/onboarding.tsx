@@ -1,4 +1,5 @@
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
 import { Dimensions, Text, View } from 'react-native';
 
@@ -16,6 +17,7 @@ const COLLAGE_COUNT = 12;
 /** Screen 12 — the only route reachable without a session. */
 export default function Onboarding() {
   const { tokens: t } = useTheme();
+  const router = useRouter();
   const { signIn, continueAsGuest, configured } = useAuth();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -111,8 +113,13 @@ export default function Onboarding() {
           <Text style={[sans(10.5, 400, { lh: 1.5, color: t.fg3 }), { textAlign: 'center', paddingTop: 4 }]}>
             {configured
               ? 'Uses the public AniList GraphQL API. We never see your password.'
-              : 'Powered by AniList. Add an AniList client id to app.json to enable sign-in.'}
+              : 'Powered by AniList. Sign-in is unavailable in this build — browse as a guest.'}
           </Text>
+          <Press onPress={() => router.push('/settings/privacy')} hitSlop={8}>
+            <Text style={[sans(10.5, 500, { lh: 1.5, color: t.fg2 }), { textAlign: 'center' }]}>
+              Privacy policy
+            </Text>
+          </Press>
         </View>
       </View>
     </View>
