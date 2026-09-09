@@ -98,10 +98,18 @@ function RootNavigator() {
 
   useEffect(() => {
     if (!ready) return;
-    const onboarding = segments[0] === 'onboarding';
+    // Compare as plain strings: expo-router's typed-route union is generated into
+    // the gitignored .expo/, so it is stale here and absent in a fresh checkout.
+    const root: string = segments[0] ?? '';
+    const onboarding = root === 'onboarding';
     // The policy has to be readable before anyone commits to a session, so it
     // is the one other route that survives the guard.
-    const publicRoute = onboarding || (segments[0] === 'settings' && segments[1] === 'privacy');
+    const publicRoute =
+      onboarding ||
+      // The OAuth redirect lands on /auth a moment before the token is stored;
+      // leave it alone or the guard bounces to onboarding and straight back.
+      root === 'auth' ||
+      (root === 'settings' && segments[1] === 'privacy');
     // Auth failures and a cold start with no session both land on screen 12.
     if (!signedIn && !guest && !publicRoute) router.replace('/onboarding');
     else if ((signedIn || guest) && onboarding) router.replace('/');
@@ -121,6 +129,8 @@ function RootNavigator() {
       >
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
+        {/* Absorbs the `maru://auth` OAuth redirect; see app/auth.tsx. */}
+        <Stack.Screen name="auth" options={{ animation: 'none' }} />
         <Stack.Screen name="media/[id]" />
         <Stack.Screen name="seasonal" />
         <Stack.Screen name="notifications" />
