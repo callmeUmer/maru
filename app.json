@@ -27,7 +27,7 @@
         "android.permission.WRITE_EXTERNAL_STORAGE"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#0B0D12",
+        "backgroundColor": "#7C86F5",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       }
@@ -58,7 +58,8 @@
           "android": {
             "enableProguardInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
-            "usesCleartextTraffic": false
+            "usesCleartextTraffic": false,
+            "extraProguardRules": "# Expo services are created reflectively from the generated\n# ExpoModulesPackageList.getServices() and looked up by interface type\n# (ConstantsModule calls appContext.service<ConstantsInterface>()). R8 cannot\n# see those call sites; minifying them away leaves Constants.expoConfig null,\n# which silently empties expo.extra.anilistClientId and breaks AniList sign-in.\n-keep class * implements expo.modules.kotlin.services.Service { *; }\n-keep class expo.modules.constants.** { *; }\n-keep class expo.modules.interfaces.** { *; }\n-keep interface expo.modules.interfaces.** { *; }\n-keep class expo.modules.ExpoModulesPackageList { *; }"
           }
         }
       ]

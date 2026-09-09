@@ -1,6 +1,7 @@
 import * as AuthSession from 'expo-auth-session';
 import Constants from 'expo-constants';
 import * as SecureStore from 'expo-secure-store';
+import * as WebBrowser from 'expo-web-browser';
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Platform } from 'react-native';
 
@@ -81,16 +82,21 @@ async function storeToken(token: string | null, expiresAt: number | null = null)
 }
 
 /**
- * `promptAsync` resolves to a discriminated union; only the success and error
- * arms carry the redirect's parameters and parsed authentication.
+ * AniList returns the implicit token in the redirect's URL *fragment*
+ * (`maru://auth#access_token=...`), so parse the hash rather than the query.
  */
-function resultToken(result: AuthSession.AuthSessionResult): {
-  params: Record<string, string>;
-  accessToken: string | null;
-} {
-  if (!('params' in result)) return { params: {}, accessToken: null };
-  const params = result.params ?? {};
-  return { params, accessToken: params.access_token ?? result.authentication?.accessToken ?? null };
+function paramsFromRedirect(url: string): Record<string, string> {
+  const hash = url.indexOf('#');
+  const start = hash >= 0 ? hash : url.indexOf('?');
+  if (start < 0) return {};
+  const out: Record<string, string> = {};
+  for (const pair of url.slice(start + 1).split('&')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    const key = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
+    out[key] = eq < 0 ? '' : decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, ' '));
+  }
+  return out;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -104,15 +110,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const [request, , promptAsync] = AuthSession.useAuthRequest(
-    {
-      clientId: CLIENT_ID,
-      redirectUri,
-      responseType: AuthSession.ResponseType.Token,
-      scopes: [],
-      usePKCE: false,
-    },
-    DISCOVERY
+  /**
+   * AniList's implicit grant takes *only* `client_id` and `response_type`, and
+   * redirects to the URI registered on the client. Passing a `redirect_uri`
+   * parameter — as `useAuthRequest` always does — makes AniList bounce to its
+   * token endpoint, which answers `unsupported_grant_type`. So build the URL by
+   * hand and drive the browser directly.
+   * @see https://docs.anilist.co/guide/auth/implicit
+   */
+  const authUrl = useMemo(
+    () =>
+      `${DISCOVERY.authorizationEndpoint}?client_id=${encodeURIComponent(
+        CLIENT_ID
+      )}&response_type=token`,
+    []
   );
 
   const loadViewer = useCallback(async () => {
@@ -159,18 +170,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           'No AniList client id configured. Add expo.extra.anilistClientId to app.json to enable sign-in.',
       };
     }
-    if (!request) return { ok: false, error: 'Sign-in is still preparing. Try again in a moment.' };
+    const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
 
-    const result = await promptAsync();
+    // Dismissing the browser is a deliberate cancel, not an error worth showing.
+    if (result.type !== 'success') return { ok: false };
 
-    // AniList returns the token in the redirect's fragment and does not echo the
-    // `state` we sent, which expo-auth-session reports as a state mismatch. The
-    // token still arrived over our own registered `maru://auth` redirect, which
-    // no other app can claim, so read it before trusting the result type.
-    const { params, accessToken } = resultToken(result);
+    const params = paramsFromRedirect(result.url);
+    const accessToken = params.access_token ?? null;
 
     if (!accessToken) {
-      if (result.type === 'cancel' || result.type === 'dismiss') return { ok: false };
       const described = params.error_description ?? params.error;
       return {
         ok: false,
@@ -191,7 +199,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await writeItem(GUEST_KEY, null);
     await loadViewer();
     return { ok: true };
-  }, [request, promptAsync, loadViewer]);
+  }, [authUrl, redirectUri, loadViewer]);
 
   const continueAsGuest = useCallback(() => {
     setGuest(true);
